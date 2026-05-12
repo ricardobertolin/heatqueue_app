@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192">
+  <!-- App icon: red rounded square with a stylized flame (heat → queue) -->
+  <rect width="192" height="192" rx="32" fill="#DA5757"/>
+  <!-- Outer flame, warm yellow -->
+  <path d="M96 28
+           C 70 60, 52 88, 52 118
+           C 52 148, 72 168, 96 168
+           C 120 168, 140 148, 140 118
+           C 140 100, 130 84, 120 72
+           C 120 92, 110 100, 104 96
+           C 112 78, 106 52, 96 28 Z"
+        fill="#F9C66B"/>
+  <!-- Inner hot core, cream -->
+  <path d="M96 96
+           C 86 110, 80 122, 80 134
+           C 80 148, 88 158, 96 158
+           C 104 158, 112 148, 112 134
+           C 112 124, 106 114, 96 96 Z"
+        fill="#FFFCF2"/>
+</svg>

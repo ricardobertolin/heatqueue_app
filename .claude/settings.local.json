@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls \"C:\\\\Users\\\\ricar\\\\Documentos\\\\_PROJETOS\\\\_Tests\\\\heatqueue_app\" && echo \"---\" && ls \"C:\\\\Users\\\\ricar\\\\Documentos\\\\_PROJETOS\\\\_Tests\\\\mandarin-pronunciation-app\")",
+      "Read(//c/Users/ricar/Documentos/_PROJETOS/_Tests/mandarin-pronunciation-app/**)",
+      "Bash(git mv *)",
+      "PowerShell(Rename-Item -Path \"Activity Queue.html\" -NewName \"index.html\")"
+    ]
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "Activity Queue",
+  "short_name": "HeatQueue",
+  "description": "A handheld-console style activity queue: heat up tasks, finish them off the conveyor.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#1a1814",
+  "theme_color": "#DA5757",
+  "orientation": "landscape",
+  "lang": "en",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
