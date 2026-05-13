@@ -6,7 +6,8 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "theme": "cream",
   "showStreak": true,
-  "showScanlines": true
+  "showScanlines": true,
+  "layout": "horizontal"
 }/*EDITMODE-END*/;
 
 const DEFAULT_TASK_DURATION_MS = 60 * 60 * 1000; // 1 hour fallback
@@ -94,12 +95,14 @@ function Stage({ width, height, children }) {
 // ────────────────────────────────────────────────────────────────────────────
 // Conveyor screen (right panel)
 // ────────────────────────────────────────────────────────────────────────────
-function ConveyorScreen({ activity, heat, elapsedMs, taskHeats, finishingId, onFinish, onAddTask, onDeleteTask, onReorderTasks, onEditTask, showStreak }) {
+function ConveyorScreen({ activity, heat, elapsedMs, taskHeats, focusedSlot, onChangeFocus, finishingId, onFinish, onAddTask, onDeleteTask, onReorderTasks, onEditTask, showStreak }) {
   if (!activity) return null;
   const tasks = activity.tasks;
   const lastIdx = tasks.length - 1;
-  const hot = tasks[lastIdx];
   const ovenCount = Math.max(1, activity.ovenCount || 1);
+  const visibleOvens = Math.min(ovenCount, tasks.length);
+  const slot = visibleOvens > 0 ? Math.min(focusedSlot ?? 0, visibleOvens - 1) : 0;
+  const focused = visibleOvens > 0 ? tasks[lastIdx - slot] : null;
   const fullyHot = heat > 0.97 && !finishingId;
 
   // ── Pan (drag empty belt to scroll horizontally) ───────────────────────────
@@ -226,7 +229,7 @@ function ConveyorScreen({ activity, heat, elapsedMs, taskHeats, finishingId, onF
           {tasks.map((task, i) => {
             const fromRight = lastIdx - i; // 0 = rightmost
             const isOnOven = fromRight < ovenCount;
-            const isPrimary = i === lastIdx;
+            const isFocused = visibleOvens > 1 && fromRight === slot;
             const isFinishing = task.id === finishingId;
             const isDragging = dragTaskIdx === i;
             const isDragOver = overTaskIdx === i && dragTaskIdx != null && dragTaskIdx !== i;
@@ -236,7 +239,7 @@ function ConveyorScreen({ activity, heat, elapsedMs, taskHeats, finishingId, onF
             return (
               <div
                 key={task.id}
-                className={`task ${isOnOven ? 'is-hot':''} ${isFinishing ? 'is-finishing':''} ${mySizzling ? 'is-sizzling':''} ${isDragging ? 'is-dragging':''} ${isDragOver ? 'is-drag-over':''}`}
+                className={`task ${isOnOven ? 'is-hot':''} ${isFocused ? 'is-focused':''} ${isFinishing ? 'is-finishing':''} ${mySizzling ? 'is-sizzling':''} ${isDragging ? 'is-dragging':''} ${isDragOver ? 'is-drag-over':''}`}
                 style={{ transform: `translateX(${tx}px) translateY(${isFinishing ? -110 : 0}px)` }}
                 draggable={!isFinishing}
                 onDragStart={(e) => onTaskDragStart(e, i)}
@@ -281,16 +284,28 @@ function ConveyorScreen({ activity, heat, elapsedMs, taskHeats, finishingId, onF
       {/* Finish action */}
       <div className="finish-row">
         <div className="finish-meta">
-          {hot ? (
+          {focused ? (
             <>
-              <span className="finish-mono">ON THE OVEN</span>
-              <span className="finish-name">{hot.name}</span>
+              {visibleOvens > 1 && (
+                <button className="oven-nav"
+                        onClick={() => onChangeFocus?.((slot - 1 + visibleOvens) % visibleOvens)}
+                        title="Previous oven">‹</button>
+              )}
+              <span className="finish-mono">
+                {visibleOvens > 1 ? `OVEN ${slot + 1}/${visibleOvens}` : 'ON THE OVEN'}
+              </span>
+              <span className="finish-name">{focused.name}</span>
               <span className="finish-bar">
                 <span className="finish-bar-fill" style={{ width: `${Math.round(heat*100)}%` }} />
               </span>
               <span className="finish-pct">
-                {fmtDuration(elapsedMs)} / {fmtDuration(hot.durationMs || 0)}
+                {fmtDuration(elapsedMs)} / {fmtDuration(focused.durationMs || 0)}
               </span>
+              {visibleOvens > 1 && (
+                <button className="oven-nav"
+                        onClick={() => onChangeFocus?.((slot + 1) % visibleOvens)}
+                        title="Next oven">›</button>
+              )}
             </>
           ) : (
             <span className="finish-mono">— add a task to start the belt —</span>
@@ -298,7 +313,7 @@ function ConveyorScreen({ activity, heat, elapsedMs, taskHeats, finishingId, onF
         </div>
         <button
           className={`finish-btn primary ${fullyHot ? 'is-ready':''}`}
-          disabled={!hot || !!finishingId}
+          disabled={!focused || !!finishingId}
           onClick={onFinish}
         >
           Finish task <kbd>⎵</kbd>
@@ -467,8 +482,8 @@ function ActivityModal({ activity, defaultColor, canDelete, onCancel, onSubmit, 
                       title={c} />
             ))}
             <label className={`swatch swatch-custom ${!ACTIVITY_COLORS.map(c=>c.toLowerCase()).includes(color.toLowerCase()) ? 'is-sel' : ''}`}
-                   title="Custom color"
-                   style={{ background: color }}>
+                   title="Custom color">
+              <span className="swatch-custom-inner" style={{ background: color }} />
               <input type="color" value={color}
                      onChange={(e) => setColor(e.target.value)} />
             </label>
@@ -614,7 +629,6 @@ function App() {
   const [now, setNow] = useState(() => Date.now());
 
   const current = activities.find(a => a.id === selectedId) || activities[0];
-  const hotTask = current?.tasks[current.tasks.length - 1];
 
   // Tick for live heat values
   useEffect(() => {
@@ -684,27 +698,41 @@ function App() {
     return out;
   }, [activities, hotTaskIdsByActivity, taskHeatValues]);
 
-  // For the finish row — focus on the rightmost task of the selected activity.
-  const rightmost = current?.tasks[current.tasks.length - 1];
-  const heat = rightmost ? (taskHeatValues[rightmost.id] || 0) : 0;
-  const rightmostStart = rightmost ? taskHeats[rightmost.id] : null;
-  const elapsedMs = rightmostStart ? Math.max(0, now - rightmostStart.startedAt) : 0;
+  // Which oven slot's task is currently shown in the finish row. 0 = rightmost.
+  const [focusedSlot, setFocusedSlot] = useState(0);
+  useEffect(() => { setFocusedSlot(0); }, [selectedId]);
+
+  const focusedTask = useMemo(() => {
+    if (!current) return null;
+    const N = Math.max(1, current.ovenCount || 1);
+    const T = current.tasks.length;
+    if (T === 0) return null;
+    const slot = Math.min(focusedSlot, N - 1, T - 1);
+    return current.tasks[T - 1 - slot] || null;
+  }, [current, focusedSlot]);
+
+  const heat = focusedTask ? (taskHeatValues[focusedTask.id] || 0) : 0;
+  const focusedStart = focusedTask ? taskHeats[focusedTask.id] : null;
+  const elapsedMs = focusedStart ? Math.max(0, now - focusedStart.startedAt) : 0;
 
   // ── Actions ───────────────────────────────────────────────────────────────
   const finishTask = useCallback(() => {
-    if (!hotTask || finishingId) return;
-    const finId = hotTask.id;
+    if (!focusedTask || finishingId) return;
+    const finId = focusedTask.id;
     setFinishingId(finId);
     setTimeout(() => {
       setActivities(acts => acts.map(a => {
         if (a.id !== selectedId) return a;
+        const idx = a.tasks.findIndex(t => t.id === finId);
+        if (idx < 0) return a;
         const ts = a.tasks.slice();
-        const moved = ts.pop();
+        const [moved] = ts.splice(idx, 1);
         return { ...a, tasks: [{ ...moved, streak: (moved.streak||0) + 1 }, ...ts] };
       }));
+      setFocusedSlot(0);
       setFinishingId(null);
     }, FINISH_MS);
-  }, [hotTask?.id, finishingId, selectedId]);
+  }, [focusedTask?.id, finishingId, selectedId]);
 
   const [addTaskOpen, setAddTaskOpen] = useState(false);
 
@@ -879,14 +907,24 @@ function App() {
         --accent:${theme.accent};
       }`}</style>
 
-      <Stage width={1280} height={760}>
-        <div className={`device ${t.showScanlines ? 'with-crt':''}`}>
+      <Stage
+        width={t.layout === 'vertical' ? 480 : 1280}
+        height={t.layout === 'vertical' ? 900 : 760}
+      >
+        <div className={`device ${t.showScanlines ? 'with-crt':''} ${t.layout === 'vertical' ? 'is-vertical':''}`}>
           {/* device top bar */}
           <div className="device-top">
             <div className="device-brand">
               <span className="logo-mark" />
               <span className="logo-text">QUEUE-DS</span>
               <span className="logo-sub">model&nbsp;A-01</span>
+              <button
+                className="layout-toggle"
+                onClick={() => setTweak('layout', t.layout === 'vertical' ? 'horizontal' : 'vertical')}
+                title={t.layout === 'vertical' ? 'Switch to horizontal' : 'Switch to vertical'}
+              >
+                {t.layout === 'vertical' ? '↔' : '↕'}
+              </button>
             </div>
             <div className="device-grille" aria-hidden="true">
               {Array.from({length:30}).map((_,i)=><span key={i} />)}
@@ -919,6 +957,8 @@ function App() {
               heat={heat}
               elapsedMs={elapsedMs}
               taskHeats={taskHeatValues}
+              focusedSlot={focusedSlot}
+              onChangeFocus={setFocusedSlot}
               finishingId={finishingId}
               onFinish={finishTask}
               onAddTask={openAddTask}
