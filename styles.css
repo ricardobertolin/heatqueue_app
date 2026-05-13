@@ -445,7 +445,7 @@
 .finish-pct{
   font-family:'JetBrains Mono',ui-monospace,monospace;
   font-size:11px;font-weight:700;color:var(--ink);
-  min-width:36px; text-align:right;
+  white-space:nowrap; text-align:right;
 }
 
 .finish-btn{
@@ -624,4 +624,69 @@
 .modal-btn.primary:hover:not(:disabled){
   background: color-mix(in oklab, var(--ink) 80%, var(--accent, #DA5757));
 }
+.modal-btn.danger{
+  border-color: #DA5757;
+  color: #DA5757;
+  background: #fff;
+}
+.modal-btn.danger:hover:not(:disabled){
+  background: #DA5757; color: #fff;
+}
 .modal-btn:disabled{ opacity:.4; cursor:not-allowed; }
+
+/* color swatches ───────────────────────────────────────────────────────── */
+.color-swatches{
+  display:flex; gap:8px; flex-wrap:wrap;
+}
+.swatch{
+  width:32px; height:32px;
+  border-radius:50%;
+  border:1.5px solid var(--ink);
+  padding:0;
+  cursor:pointer;
+  position:relative;
+  box-shadow: 0 2px 0 rgba(0,0,0,.18);
+  transition: transform .08s, box-shadow .08s;
+}
+.swatch:hover{ transform: translateY(-1px); }
+.swatch.is-sel{
+  transform: translateY(-1px);
+  box-shadow:
+    0 2px 0 rgba(0,0,0,.18),
+    inset 0 0 0 3px var(--screen, #F4EFE0),
+    inset 0 0 0 5px var(--ink);
+}
+.swatch-custom{
+  position:relative;
+  overflow:hidden;
+  background-image: conic-gradient(from 90deg,
+    #DA5757, #F0A33A, #F9C66B, #5BAE73, #4A6FA5, #B47BD6, #E07AB5, #DA5757);
+}
+.swatch-custom input[type="color"]{
+  position:absolute; inset:0;
+  width:100%; height:100%;
+  opacity:0; cursor:pointer;
+  border:none; padding:0;
+}
+
+/* oven count picker ────────────────────────────────────────────────────── */
+.oven-picker{
+  display:flex; gap:6px;
+}
+.oven-pick{
+  flex:1; height:36px;
+  font-family:'JetBrains Mono', ui-monospace, monospace;
+  font-weight:700; font-size:14px;
+  border:1.5px solid var(--ink);
+  border-radius:8px;
+  background:#fff; color:var(--ink);
+  cursor:pointer;
+  box-shadow: 0 2px 0 rgba(0,0,0,.18);
+  transition: transform .08s, box-shadow .08s, background .15s;
+}
+.oven-pick:hover{ background: rgba(0,0,0,.05); }
+.oven-pick:active{ transform: translateY(1px); box-shadow: 0 1px 0 rgba(0,0,0,.18); }
+.oven-pick.is-sel{
+  background: var(--ink); color: #fff;
+  box-shadow: 0 2px 0 rgba(0,0,0,.18), inset 0 0 0 2px var(--screen);
+}

@@ -12,6 +12,27 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
 const DEFAULT_TASK_DURATION_MS = 60 * 60 * 1000; // 1 hour fallback
 const MS = { day: 86400_000, hour: 3600_000, minute: 60_000 };
 
+function msToParts(ms) {
+  ms = Math.max(0, ms || 0);
+  return {
+    days:    Math.floor(ms / MS.day),
+    hours:   Math.floor((ms % MS.day) / MS.hour),
+    minutes: Math.floor((ms % MS.hour) / MS.minute),
+  };
+}
+
+function fmtDuration(ms) {
+  const total = Math.max(0, Math.floor((ms || 0) / 1000));
+  const d = Math.floor(total / 86400);
+  const h = Math.floor((total % 86400) / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (d > 0) return h > 0 ? `${d}d ${h}h` : `${d}d`;
+  if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  if (m > 0) return s > 0 ? `${m}m ${s}s` : `${m}m`;
+  return `${s}s`;
+}
+
 const THEMES = {
   cream:    { chassis:'#DBD3BF', edge:'#B9AE93', screen:'#F4EFE0', ink:'#2A2620', accent:'#DA5757' },
   graphite: { chassis:'#3C3A35', edge:'#23211D', screen:'#1F1D19', ink:'#EFEAD8', accent:'#F9C66B' },
@@ -20,26 +41,9 @@ const THEMES = {
 
 const ACTIVITY_COLORS = ['#DA5757', '#F0A33A', '#5BAE73', '#4A6FA5', '#B47BD6', '#E07AB5'];
 
+const MAX_OVENS = 4;
 const INITIAL_ACTIVITIES = [
-  { id: 1, name: 'DAILY DRILLS', color: '#DA5757', tasks: [
-    { id: 't1', name: 'Mandarin',  streak: 7,  durationMs: 30_000 },
-    { id: 't2', name: 'Research',  streak: 4,  durationMs: 20_000 },
-    { id: 't3', name: 'UWB',       streak: 12, durationMs: 15_000 },
-    { id: 't4', name: 'Horse',     streak: 2,  durationMs: 10_000 },
-  ]},
-  { id: 2, name: 'HOUSE LOOP',   color: '#F0A33A', tasks: [
-    { id: 't5', name: 'Dishes',    streak: 1, durationMs: 15_000 },
-    { id: 't6', name: 'Laundry',   streak: 3, durationMs: 25_000 },
-    { id: 't7', name: 'Plants',    streak: 9, durationMs: 18_000 },
-  ]},
-  { id: 3, name: 'STUDIO',       color: '#5BAE73', tasks: [
-    { id: 't8', name: 'Sketchbk',  streak: 0, durationMs: 25_000 },
-    { id: 't9', name: 'Synth',     streak: 5, durationMs: 18_000 },
-    { id:'t9b', name: 'Journal',   streak: 2, durationMs: 12_000 },
-  ]},
-  { id: 4, name: 'INBOX',        color: '#4A6FA5', tasks: [
-    { id:'t10', name: 'Triage',    streak: 0, durationMs: 20_000 },
-  ]},
+  { id: 1, name: 'TASKS', color: '#DA5757', ovenCount: 1, tasks: [] },
 ];
 
 // Layout constants — coordinates inside the right screen
@@ -90,11 +94,12 @@ function Stage({ width, height, children }) {
 // ────────────────────────────────────────────────────────────────────────────
 // Conveyor screen (right panel)
 // ────────────────────────────────────────────────────────────────────────────
-function ConveyorScreen({ activity, heat, finishingId, onFinish, onAddTask, onDeleteTask, onReorderTasks, showStreak }) {
+function ConveyorScreen({ activity, heat, elapsedMs, taskHeats, finishingId, onFinish, onAddTask, onDeleteTask, onReorderTasks, onEditTask, showStreak }) {
   if (!activity) return null;
   const tasks = activity.tasks;
   const lastIdx = tasks.length - 1;
   const hot = tasks[lastIdx];
+  const ovenCount = Math.max(1, activity.ovenCount || 1);
   const fullyHot = heat > 0.97 && !finishingId;
 
   // ── Pan (drag empty belt to scroll horizontally) ───────────────────────────
@@ -194,39 +199,57 @@ function ConveyorScreen({ activity, heat, finishingId, onFinish, onAddTask, onDe
         <div className="belt-rail" aria-hidden="true">
           <div className="rail-arrow" />
         </div>
-        {/* heat glow under the oven */}
-        <div className="oven-glow" style={{ opacity: heat * 0.9 }} aria-hidden="true" />
-        {/* the oven (rollers) */}
-        <div className="oven" aria-hidden="true">
-          <span className="roller r-l" />
-          <span className="roller r-r" />
-          <div className="oven-floor" />
-        </div>
+        {/* heat glow + ovens — anchored to the right end of the belt and pan with it */}
+        {Array.from({ length: ovenCount }).map((_, slot) => {
+          const slotTaskIdx = lastIdx - slot;
+          const slotTask = slotTaskIdx >= 0 ? tasks[slotTaskIdx] : null;
+          const slotHeat = slotTask ? (taskHeats?.[slotTask.id] || 0) : 0;
+          const rightOffset = slot * STEP;
+          return (
+            <React.Fragment key={`oven-${slot}`}>
+              <div className="oven-glow"
+                   style={{ right: `${51 + rightOffset - panX}px`, opacity: slotHeat * 0.9 }}
+                   aria-hidden="true" />
+              <div className="oven"
+                   style={{ right: `${101 + rightOffset - panX}px` }}
+                   aria-hidden="true">
+                <span className="roller r-l" />
+                <span className="roller r-r" />
+                <div className="oven-floor" />
+              </div>
+            </React.Fragment>
+          );
+        })}
 
         {/* tasks */}
         <div className="task-track">
           {tasks.map((task, i) => {
-            const fromRight = lastIdx - i; // 0 = on the oven
-            const isHot = i === lastIdx;
+            const fromRight = lastIdx - i; // 0 = rightmost
+            const isOnOven = fromRight < ovenCount;
+            const isPrimary = i === lastIdx;
             const isFinishing = task.id === finishingId;
             const isDragging = dragTaskIdx === i;
             const isDragOver = overTaskIdx === i && dragTaskIdx != null && dragTaskIdx !== i;
             const tx = -fromRight * STEP + panX;
+            const myHeat = taskHeats?.[task.id] || 0;
+            const mySizzling = isOnOven && myHeat > 0.97 && !isFinishing;
             return (
               <div
                 key={task.id}
-                className={`task ${isHot ? 'is-hot':''} ${isFinishing ? 'is-finishing':''} ${fullyHot && isHot ? 'is-sizzling':''} ${isDragging ? 'is-dragging':''} ${isDragOver ? 'is-drag-over':''}`}
+                className={`task ${isOnOven ? 'is-hot':''} ${isFinishing ? 'is-finishing':''} ${mySizzling ? 'is-sizzling':''} ${isDragging ? 'is-dragging':''} ${isDragOver ? 'is-drag-over':''}`}
                 style={{ transform: `translateX(${tx}px) translateY(${isFinishing ? -110 : 0}px)` }}
                 draggable={!isFinishing}
                 onDragStart={(e) => onTaskDragStart(e, i)}
                 onDragOver={(e) => onTaskDragOver(e, i)}
                 onDrop={(e) => onTaskDrop(e, i)}
                 onDragEnd={onTaskDragEnd}
+                onDoubleClick={() => onEditTask?.(task.id)}
+                title="Double-click to edit"
               >
                 <div className="task-label">{task.name}</div>
                 <div className="task-stack">
                   {[0,1,2].map(bi => {
-                    const fill = isHot && !isFinishing ? heatColorForBox(bi, heat) : null;
+                    const fill = isOnOven && !isFinishing ? heatColorForBox(bi, myHeat) : null;
                     return (
                       <div className="stack-box" key={bi}
                            style={fill ? { background: fill, borderColor:'#2A2620' } : undefined} />
@@ -265,7 +288,9 @@ function ConveyorScreen({ activity, heat, finishingId, onFinish, onAddTask, onDe
               <span className="finish-bar">
                 <span className="finish-bar-fill" style={{ width: `${Math.round(heat*100)}%` }} />
               </span>
-              <span className="finish-pct">{Math.round(heat*100)}°</span>
+              <span className="finish-pct">
+                {fmtDuration(elapsedMs)} / {fmtDuration(hot.durationMs || 0)}
+              </span>
             </>
           ) : (
             <span className="finish-mono">— add a task to start the belt —</span>
@@ -284,16 +309,21 @@ function ConveyorScreen({ activity, heat, finishingId, onFinish, onAddTask, onDe
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Add-task modal
+// Task modal — handles both "new task" and "edit task"
 // ────────────────────────────────────────────────────────────────────────────
-function AddTaskModal({ activityName, onCancel, onSubmit }) {
-  const [name, setName] = useState('');
-  const [days, setDays] = useState(0);
-  const [hours, setHours] = useState(1);
-  const [minutes, setMinutes] = useState(0);
+function TaskModal({ activityName, task, onCancel, onSubmit, onDelete }) {
+  const isEdit = !!task;
+  const initial = isEdit ? msToParts(task.durationMs || DEFAULT_TASK_DURATION_MS) : { days: 0, hours: 0, minutes: 0 };
+  const [name, setName] = useState(task?.name || '');
+  const [days, setDays] = useState(initial.days);
+  const [hours, setHours] = useState(initial.hours);
+  const [minutes, setMinutes] = useState(initial.minutes);
   const nameRef = useRef(null);
 
-  useEffect(() => { nameRef.current?.focus(); }, []);
+  useEffect(() => {
+    nameRef.current?.focus();
+    if (isEdit) nameRef.current?.select();
+  }, [isEdit]);
 
   const totalMs = (days * MS.day) + (hours * MS.hour) + (minutes * MS.minute);
   const canSubmit = name.trim().length > 0 && totalMs > 0;
@@ -301,6 +331,10 @@ function AddTaskModal({ activityName, onCancel, onSubmit }) {
   function submit() {
     if (!canSubmit) return;
     onSubmit(name, totalMs);
+  }
+  function tryDelete() {
+    if (!isEdit) return;
+    if (window.confirm(`Delete task "${task.name}"?`)) onDelete();
   }
   function onKey(e) {
     if (e.key === 'Escape') { e.stopPropagation(); onCancel(); }
@@ -316,7 +350,7 @@ function AddTaskModal({ activityName, onCancel, onSubmit }) {
     <div className="modal-overlay" onMouseDown={onCancel}>
       <div className="modal" onMouseDown={(e) => e.stopPropagation()} onKeyDown={onKey}>
         <div className="modal-hd">
-          <h3>New task</h3>
+          <h3>{isEdit ? 'Edit task' : 'New task'}</h3>
           {activityName && <span className="modal-sub mono">→ {activityName}</span>}
         </div>
 
@@ -354,9 +388,122 @@ function AddTaskModal({ activityName, onCancel, onSubmit }) {
         </div>
 
         <div className="modal-actions">
+          {isEdit && (
+            <button className="modal-btn danger" onClick={tryDelete}>Delete</button>
+          )}
+          <div style={{ flex: 1 }} />
           <button className="modal-btn" onClick={onCancel}>Cancel</button>
           <button className="modal-btn primary" disabled={!canSubmit} onClick={submit}>
-            Add task
+            {isEdit ? 'Save' : 'Add task'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Activity modal — handles both "new activity" and "edit activity"
+// ────────────────────────────────────────────────────────────────────────────
+function ActivityModal({ activity, defaultColor, canDelete, onCancel, onSubmit, onDelete }) {
+  const isEdit = !!activity;
+  const [name, setName] = useState(activity?.name || '');
+  const [color, setColor] = useState(activity?.color || defaultColor || ACTIVITY_COLORS[0]);
+  const [ovenCount, setOvenCount] = useState(activity?.ovenCount || 1);
+  const nameRef = useRef(null);
+
+  useEffect(() => {
+    nameRef.current?.focus();
+    if (isEdit) nameRef.current?.select();
+  }, [isEdit]);
+
+  const canSubmit = name.trim().length > 0;
+
+  function submit() {
+    if (!canSubmit) return;
+    onSubmit(name.trim().toUpperCase().slice(0, 16), color, ovenCount);
+  }
+  function tryDelete() {
+    if (!isEdit || !canDelete) return;
+    if (window.confirm(`Delete "${activity.name}" and all its tasks?`)) onDelete();
+  }
+  function onKey(e) {
+    if (e.key === 'Escape') { e.stopPropagation(); onCancel(); }
+    else if (e.key === 'Enter') { e.stopPropagation(); submit(); }
+  }
+
+  return (
+    <div className="modal-overlay" onMouseDown={onCancel}>
+      <div className="modal" onMouseDown={(e) => e.stopPropagation()} onKeyDown={onKey}>
+        <div className="modal-hd">
+          <h3>{isEdit ? 'Edit activity' : 'New activity'}</h3>
+          {isEdit && (
+            <span className="modal-sub mono">
+              {activity.tasks.length} task{activity.tasks.length === 1 ? '' : 's'}
+            </span>
+          )}
+        </div>
+
+        <label className="modal-field">
+          <span className="modal-lbl mono">Name</span>
+          <input
+            ref={nameRef}
+            type="text"
+            maxLength={16}
+            placeholder="e.g. STUDIO"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+        </label>
+
+        <div className="modal-field">
+          <span className="modal-lbl mono">Color</span>
+          <div className="color-swatches">
+            {ACTIVITY_COLORS.map(c => (
+              <button key={c} type="button"
+                      className={`swatch ${c.toLowerCase() === color.toLowerCase() ? 'is-sel' : ''}`}
+                      style={{ background: c }}
+                      onClick={() => setColor(c)}
+                      title={c} />
+            ))}
+            <label className={`swatch swatch-custom ${!ACTIVITY_COLORS.map(c=>c.toLowerCase()).includes(color.toLowerCase()) ? 'is-sel' : ''}`}
+                   title="Custom color"
+                   style={{ background: color }}>
+              <input type="color" value={color}
+                     onChange={(e) => setColor(e.target.value)} />
+            </label>
+          </div>
+        </div>
+
+        <div className="modal-field">
+          <span className="modal-lbl mono">Ovens (tasks heating in parallel)</span>
+          <div className="oven-picker">
+            {Array.from({ length: MAX_OVENS }).map((_, i) => {
+              const n = i + 1;
+              return (
+                <button key={n} type="button"
+                        className={`oven-pick ${ovenCount === n ? 'is-sel' : ''}`}
+                        onClick={() => setOvenCount(n)}>
+                  {n}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="modal-actions">
+          {isEdit && (
+            <button className="modal-btn danger"
+                    disabled={!canDelete}
+                    title={canDelete ? 'Delete activity' : 'Cannot delete the last activity'}
+                    onClick={tryDelete}>
+              Delete
+            </button>
+          )}
+          <div style={{ flex: 1 }} />
+          <button className="modal-btn" onClick={onCancel}>Cancel</button>
+          <button className="modal-btn primary" disabled={!canSubmit} onClick={submit}>
+            {isEdit ? 'Save' : 'Add activity'}
           </button>
         </div>
       </div>
@@ -367,7 +514,7 @@ function AddTaskModal({ activityName, onCancel, onSubmit }) {
 // ────────────────────────────────────────────────────────────────────────────
 // Sidebar (left panel)
 // ────────────────────────────────────────────────────────────────────────────
-function ActivitySidebar({ activities, selectedId, onSelect, onAdd, onRename, onDelete, onReorderActivities, onSave, onLoad, heats }) {
+function ActivitySidebar({ activities, selectedId, onSelect, onAdd, onEditActivity, onReorderActivities, onSave, onLoad, heats }) {
   const fileInputRef = useRef(null);
   function onLoadClick() { fileInputRef.current?.click(); }
   function onFilePicked(e) {
@@ -421,10 +568,12 @@ function ActivitySidebar({ activities, selectedId, onSelect, onAdd, onRename, on
                 onDragOver={(e) => onRowDragOver(e, i)}
                 onDrop={(e) => onRowDrop(e, i)}
                 onDragEnd={onRowDragEnd}
-                onClick={() => onSelect(a.id)}>
+                onClick={() => onSelect(a.id)}
+                onDoubleClick={(e) => { e.stopPropagation(); onEditActivity(a.id); }}
+                title="Double-click to edit">
               <span className="row-bar" />
               <span className="row-num">{String(i+1).padStart(2,'0')}</span>
-              <span className="row-name" onDoubleClick={(e)=>{e.stopPropagation();onRename(a.id);}}>{a.name}</span>
+              <span className="row-name">{a.name}</span>
               <span className="row-count">{a.tasks.length}</span>
               {sel && <span className="row-chev">▸</span>}
             </li>
@@ -461,7 +610,7 @@ function App() {
   const [activities, setActivities] = useState(INITIAL_ACTIVITIES);
   const [selectedId, setSelectedId] = useState(1);
   const [finishingId, setFinishingId] = useState(null);
-  const [heatStarts, setHeatStarts] = useState({}); // { [activityId]: { hotTaskId, startedAt } }
+  const [taskHeats, setTaskHeats] = useState({}); // { [taskId]: { startedAt } }
   const [now, setNow] = useState(() => Date.now());
 
   const current = activities.find(a => a.id === selectedId) || activities[0];
@@ -473,46 +622,73 @@ function App() {
     return () => clearInterval(id);
   }, []);
 
-  // Maintain a heat-start entry per activity, keyed by its current hot task id.
-  // Whenever the hot task changes (finish, add, delete, reorder), the entry resets.
+  // Set of task ids currently in an oven slot (last N of each activity, where N=ovenCount).
+  const hotTaskIdsByActivity = useMemo(() => {
+    const out = new Map();
+    activities.forEach(a => {
+      const N = Math.max(1, a.ovenCount || 1);
+      const len = a.tasks.length;
+      const ids = [];
+      for (let i = Math.max(0, len - N); i < len; i++) ids.push(a.tasks[i].id);
+      out.set(a.id, ids);
+    });
+    return out;
+  }, [activities]);
+
+  const allHotTaskIds = useMemo(() => {
+    const s = new Set();
+    hotTaskIdsByActivity.forEach(ids => ids.forEach(id => s.add(id)));
+    return s;
+  }, [hotTaskIdsByActivity]);
+
+  // Maintain a per-task startedAt for any task currently in an oven slot.
+  // Entering a slot fresh sets startedAt = now; leaving a slot clears the entry.
   useEffect(() => {
-    setHeatStarts(prev => {
+    setTaskHeats(prev => {
       const next = { ...prev };
       let changed = false;
-      const seen = new Set();
-      activities.forEach(a => {
-        seen.add(String(a.id));
-        const ht = a.tasks[a.tasks.length - 1];
-        const newId = ht?.id || null;
-        const cur = next[a.id];
-        if (!cur || cur.hotTaskId !== newId) {
-          if (newId == null) delete next[a.id];
-          else next[a.id] = { hotTaskId: newId, startedAt: Date.now() };
-          changed = true;
-        }
+      allHotTaskIds.forEach(tid => {
+        if (!next[tid]) { next[tid] = { startedAt: Date.now() }; changed = true; }
       });
-      Object.keys(next).forEach(k => {
-        if (!seen.has(k)) { delete next[k]; changed = true; }
+      Object.keys(next).forEach(tid => {
+        if (!allHotTaskIds.has(tid)) { delete next[tid]; changed = true; }
       });
       return changed ? next : prev;
     });
-  }, [activities]);
+  }, [allHotTaskIds]);
 
-  // Compute current heat (0..1) per activity, using each hot task's own durationMs.
+  // Compute heat per task (0..1).
+  const taskHeatValues = useMemo(() => {
+    const out = {};
+    activities.forEach(a => {
+      a.tasks.forEach(t => {
+        if (finishingId === t.id) { out[t.id] = 1; return; }
+        const entry = taskHeats[t.id];
+        if (!entry) { out[t.id] = 0; return; }
+        const dur = t.durationMs || DEFAULT_TASK_DURATION_MS;
+        out[t.id] = Math.max(0, Math.min(1, (now - entry.startedAt) / dur));
+      });
+    });
+    return out;
+  }, [activities, taskHeats, now, finishingId]);
+
+  // Per-activity heat for the menu glow = max heat among its current hot tasks.
   const heats = useMemo(() => {
     const out = {};
     activities.forEach(a => {
-      const entry = heatStarts[a.id];
-      if (!entry) { out[a.id] = 0; return; }
-      if (finishingId === entry.hotTaskId) { out[a.id] = 1; return; }
-      const ht = a.tasks[a.tasks.length - 1];
-      const taskDur = ht?.durationMs || DEFAULT_TASK_DURATION_MS;
-      out[a.id] = Math.max(0, Math.min(1, (now - entry.startedAt) / taskDur));
+      const ids = hotTaskIdsByActivity.get(a.id) || [];
+      let max = 0;
+      ids.forEach(id => { const v = taskHeatValues[id] || 0; if (v > max) max = v; });
+      out[a.id] = max;
     });
     return out;
-  }, [activities, heatStarts, now, finishingId]);
+  }, [activities, hotTaskIdsByActivity, taskHeatValues]);
 
-  const heat = heats[selectedId] || 0;
+  // For the finish row — focus on the rightmost task of the selected activity.
+  const rightmost = current?.tasks[current.tasks.length - 1];
+  const heat = rightmost ? (taskHeatValues[rightmost.id] || 0) : 0;
+  const rightmostStart = rightmost ? taskHeats[rightmost.id] : null;
+  const elapsedMs = rightmostStart ? Math.max(0, now - rightmostStart.startedAt) : 0;
 
   // ── Actions ───────────────────────────────────────────────────────────────
   const finishTask = useCallback(() => {
@@ -534,13 +710,15 @@ function App() {
 
   const openAddTask = useCallback(() => setAddTaskOpen(true), []);
   const submitAddTask = useCallback((name, durationMs) => {
+    // Prepend at the back of the queue (leftmost, farthest from the oven).
+    // Tasks already heating on the oven keep their position and their heat.
     setActivities(acts => acts.map(a => a.id === selectedId
-      ? { ...a, tasks: [...a.tasks, {
+      ? { ...a, tasks: [{
           id: `tk_${Date.now()}`,
           name: name.trim().slice(0,16),
           streak: 0,
           durationMs,
-        }] }
+        }, ...a.tasks] }
       : a));
     setAddTaskOpen(false);
   }, [selectedId]);
@@ -550,23 +728,65 @@ function App() {
       ? { ...a, tasks: a.tasks.filter(x => x.id !== tid) } : a));
   }, [selectedId]);
 
-  const addActivity = useCallback(() => {
-    const name = window.prompt('Activity name?');
-    if (!name) return;
-    setActivities(acts => {
-      const color = ACTIVITY_COLORS[acts.length % ACTIVITY_COLORS.length];
-      const id = Date.now();
-      return [...acts, { id, name: name.toUpperCase().slice(0,16), color, tasks: [] }];
-    });
+  const [editingTaskId, setEditingTaskId] = useState(null);
+  const editingTask = editingTaskId != null
+    ? current?.tasks.find(t => t.id === editingTaskId) || null
+    : null;
+
+  const openEditTask = useCallback((tid) => setEditingTaskId(tid), []);
+  const submitEditTask = useCallback((name, durationMs) => {
+    setActivities(acts => acts.map(a => a.id !== selectedId ? a : {
+      ...a,
+      tasks: a.tasks.map(t => t.id === editingTaskId
+        ? { ...t, name: name.trim().slice(0,16), durationMs }
+        : t),
+    }));
+    setEditingTaskId(null);
+  }, [selectedId, editingTaskId]);
+  const deleteEditingTask = useCallback(() => {
+    if (editingTaskId == null) return;
+    setActivities(acts => acts.map(a => a.id !== selectedId ? a : {
+      ...a, tasks: a.tasks.filter(t => t.id !== editingTaskId),
+    }));
+    setEditingTaskId(null);
+  }, [selectedId, editingTaskId]);
+
+  const [addActivityOpen, setAddActivityOpen] = useState(false);
+  const openAddActivity = useCallback(() => setAddActivityOpen(true), []);
+  const submitAddActivity = useCallback((name, color, ovenCount) => {
+    setActivities(acts => [
+      ...acts,
+      { id: Date.now(), name, color, ovenCount: ovenCount || 1, tasks: [] },
+    ]);
+    setAddActivityOpen(false);
   }, []);
 
-  const renameActivity = useCallback((id) => {
-    const a = activities.find(x => x.id === id);
-    if (!a) return;
-    const name = window.prompt('Rename activity', a.name);
-    if (!name) return;
-    setActivities(acts => acts.map(x => x.id === id ? { ...x, name: name.toUpperCase().slice(0,16) } : x));
-  }, [activities]);
+  const [editingActivityId, setEditingActivityId] = useState(null);
+  const editingActivity = editingActivityId != null
+    ? activities.find(a => a.id === editingActivityId) || null
+    : null;
+
+  const openEditActivity = useCallback((id) => setEditingActivityId(id), []);
+  const submitEditActivity = useCallback((name, color, ovenCount) => {
+    setActivities(acts => acts.map(a =>
+      a.id === editingActivityId ? { ...a, name, color, ovenCount: ovenCount || 1 } : a));
+    setEditingActivityId(null);
+  }, [editingActivityId]);
+  const deleteEditingActivity = useCallback(() => {
+    if (editingActivityId == null) return;
+    setActivities(acts => {
+      if (acts.length <= 1) return acts;
+      return acts.filter(a => a.id !== editingActivityId);
+    });
+    setEditingActivityId(null);
+  }, [editingActivityId]);
+
+  // If the selected activity gets deleted, fall back to the first remaining.
+  useEffect(() => {
+    if (activities.length > 0 && !activities.find(a => a.id === selectedId)) {
+      setSelectedId(activities[0].id);
+    }
+  }, [activities, selectedId]);
 
   const reorderTasks = useCallback((from, to) => {
     setActivities(acts => acts.map(a => {
@@ -592,11 +812,11 @@ function App() {
   // ── Save / Load ───────────────────────────────────────────────────────────
   const saveToFile = useCallback(() => {
     const payload = {
-      version: 1,
+      version: 2,
       savedAt: new Date().toISOString(),
       selectedId,
       activities,
-      heatStarts,
+      taskHeats,
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -607,7 +827,7 @@ function App() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-  }, [activities, heatStarts, selectedId]);
+  }, [activities, taskHeats, selectedId]);
 
   const loadFromFile = useCallback((file) => {
     const reader = new FileReader();
@@ -615,11 +835,13 @@ function App() {
       try {
         const data = JSON.parse(String(reader.result));
         if (!Array.isArray(data.activities)) throw new Error('bad shape');
-        setActivities(data.activities);
-        if (data.heatStarts && typeof data.heatStarts === 'object') {
-          setHeatStarts(data.heatStarts);
+        // Backfill ovenCount for older saves.
+        const acts = data.activities.map(a => ({ ovenCount: 1, ...a }));
+        setActivities(acts);
+        if (data.taskHeats && typeof data.taskHeats === 'object') {
+          setTaskHeats(data.taskHeats);
         } else {
-          setHeatStarts({});
+          setTaskHeats({});
         }
         if (data.selectedId != null) setSelectedId(data.selectedId);
       } catch (err) {
@@ -632,7 +854,7 @@ function App() {
   // ── Keyboard ──────────────────────────────────────────────────────────────
   useEffect(() => {
     function onKey(e) {
-      if (addTaskOpen) return;
+      if (addTaskOpen || addActivityOpen || editingActivityId != null || editingTaskId != null) return;
       if (e.target && /input|textarea/i.test(e.target.tagName)) return;
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault();
@@ -646,7 +868,7 @@ function App() {
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [activities, selectedId, finishTask, addTaskOpen]);
+  }, [activities, selectedId, finishTask, addTaskOpen, addActivityOpen, editingActivityId, editingTaskId]);
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -682,8 +904,8 @@ function App() {
               activities={activities}
               selectedId={selectedId}
               onSelect={setSelectedId}
-              onAdd={addActivity}
-              onRename={renameActivity}
+              onAdd={openAddActivity}
+              onEditActivity={openEditActivity}
               onReorderActivities={reorderActivities}
               onSave={saveToFile}
               onLoad={loadFromFile}
@@ -695,11 +917,14 @@ function App() {
             <ConveyorScreen
               activity={current}
               heat={heat}
+              elapsedMs={elapsedMs}
+              taskHeats={taskHeatValues}
               finishingId={finishingId}
               onFinish={finishTask}
               onAddTask={openAddTask}
               onDeleteTask={deleteTask}
               onReorderTasks={reorderTasks}
+              onEditTask={openEditTask}
               showStreak={t.showStreak}
             />
           </div>
@@ -732,10 +957,38 @@ function App() {
       </TweaksPanel>
 
       {addTaskOpen && (
-        <AddTaskModal
+        <TaskModal
           activityName={current?.name}
           onCancel={() => setAddTaskOpen(false)}
           onSubmit={submitAddTask}
+        />
+      )}
+
+      {editingTask && (
+        <TaskModal
+          activityName={current?.name}
+          task={editingTask}
+          onCancel={() => setEditingTaskId(null)}
+          onSubmit={submitEditTask}
+          onDelete={deleteEditingTask}
+        />
+      )}
+
+      {addActivityOpen && (
+        <ActivityModal
+          defaultColor={ACTIVITY_COLORS[activities.length % ACTIVITY_COLORS.length]}
+          onCancel={() => setAddActivityOpen(false)}
+          onSubmit={submitAddActivity}
+        />
+      )}
+
+      {editingActivity && (
+        <ActivityModal
+          activity={editingActivity}
+          canDelete={activities.length > 1}
+          onCancel={() => setEditingActivityId(null)}
+          onSubmit={submitEditActivity}
+          onDelete={deleteEditingActivity}
         />
       )}
     </>
