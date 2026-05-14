@@ -4,7 +4,11 @@
       "Bash(ls \"C:\\\\Users\\\\ricar\\\\Documentos\\\\_PROJETOS\\\\_Tests\\\\heatqueue_app\" && echo \"---\" && ls \"C:\\\\Users\\\\ricar\\\\Documentos\\\\_PROJETOS\\\\_Tests\\\\mandarin-pronunciation-app\")",
       "Read(//c/Users/ricar/Documentos/_PROJETOS/_Tests/mandarin-pronunciation-app/**)",
       "Bash(git mv *)",
-      "PowerShell(Rename-Item -Path \"Activity Queue.html\" -NewName \"index.html\")"
+      "PowerShell(Rename-Item -Path \"Activity Queue.html\" -NewName \"index.html\")",
+      "Bash(npx --yes -p @babel/core@7 -p @babel/preset-react@7 babel --presets @babel/preset-react app.jsx)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(npx --yes -p @babel/core@7 -p @babel/preset-react@7 -p @babel/cli@7 babel --presets @babel/preset-react app.jsx)",
+      "Bash(npx --yes -p @babel/core@7 -p @babel/preset-react@7 node -e \"const b=require\\('@babel/core'\\);const fs=require\\('fs'\\);['app.jsx','tweaks-panel.jsx'].forEach\\(f=>{try{b.transformSync\\(fs.readFileSync\\(f,'utf8'\\),{presets:[require\\('@babel/preset-react'\\)],filename:f}\\);console.log\\('OK',f\\)}catch\\(e\\){console.log\\('ERR',f,e.message\\)}}\\)\")"
     ]
   }
 }

@@ -553,9 +553,14 @@ function ActivityModal({ activity, defaultColor, canDelete, onCancel, onSubmit, 
 // ────────────────────────────────────────────────────────────────────────────
 // Sidebar (left panel)
 // ────────────────────────────────────────────────────────────────────────────
-function ActivitySidebar({ activities, selectedId, onSelect, onAdd, onEditActivity, onReorderActivities, onSave, onLoad, heats }) {
+function ActivitySidebar({ activities, selectedId, onSelect, onAdd, onEditActivity, onReorderActivities, onSave, onLoad, onPickLoad, heats }) {
   const fileInputRef = useRef(null);
-  function onLoadClick() { fileInputRef.current?.click(); }
+  function onLoadClick() {
+    // Prefer the file picker (lets future saves overwrite the same file);
+    // fall back to a plain file input where it isn't supported.
+    if (window.showOpenFilePicker) onPickLoad();
+    else fileInputRef.current?.click();
+  }
   function onFilePicked(e) {
     const f = e.target.files?.[0];
     if (f) onLoad(f);
@@ -621,8 +626,8 @@ function ActivitySidebar({ activities, selectedId, onSelect, onAdd, onEditActivi
       </ul>
       <button className="add-activity" onClick={onAdd}>＋ Add Activity</button>
       <div className="sidebar-io">
-        <button className="io-btn" onClick={onSave} title="Download save file">↓ Save</button>
-        <button className="io-btn" onClick={onLoadClick} title="Load save file">↑ Load</button>
+        <button className="io-btn" onClick={onSave} title="Save to a file (overwrites the same file on later saves)">↓ Save</button>
+        <button className="io-btn" onClick={onLoadClick} title="Load a save file">↑ Load</button>
         <input
           ref={fileInputRef}
           type="file"
@@ -640,16 +645,38 @@ function ActivitySidebar({ activities, selectedId, onSelect, onAdd, onEditActivi
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// Persistence — auto-save to localStorage so data restores on every open
+// ────────────────────────────────────────────────────────────────────────────
+const STORAGE_KEY = 'heatqueue:autosave';
+
+function readSavedState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (!Array.isArray(data.activities)) return null;
+    return data;
+  } catch (_) {
+    return null;
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // Main App
 // ────────────────────────────────────────────────────────────────────────────
 function App() {
   const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
   const theme = THEMES[t.theme] || THEMES.cream;
 
-  const [activities, setActivities] = useState(INITIAL_ACTIVITIES);
-  const [selectedId, setSelectedId] = useState(1);
+  // Restore the last session from localStorage (read once at boot).
+  const boot = useRef(readSavedState()).current;
+  const [activities, setActivities] = useState(() =>
+    boot ? boot.activities.map(a => ({ ovenCount: 1, ...a })) : INITIAL_ACTIVITIES);
+  const [selectedId, setSelectedId] = useState(() =>
+    boot && boot.selectedId != null ? boot.selectedId : 1);
   const [finishingId, setFinishingId] = useState(null);
-  const [taskHeats, setTaskHeats] = useState({}); // { [taskId]: { startedAt } }
+  const [taskHeats, setTaskHeats] = useState(() =>
+    boot && boot.taskHeats && typeof boot.taskHeats === 'object' ? boot.taskHeats : {}); // { [taskId]: { startedAt } }
   const [now, setNow] = useState(() => Date.now());
 
   const current = activities.find(a => a.id === selectedId) || activities[0];
@@ -862,46 +889,107 @@ function App() {
   }, []);
 
   // ── Save / Load ───────────────────────────────────────────────────────────
-  const saveToFile = useCallback(() => {
-    const payload = {
-      version: 2,
-      savedAt: new Date().toISOString(),
-      selectedId,
-      activities,
-      taskHeats,
-    };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const buildPayload = useCallback(() => ({
+    version: 2,
+    savedAt: new Date().toISOString(),
+    selectedId,
+    activities,
+    taskHeats,
+  }), [activities, taskHeats, selectedId]);
+
+  // Auto-save to localStorage on every change (debounced) so the app restores
+  // itself on the next open — no manual "Load" needed.
+  useEffect(() => {
+    const id = setTimeout(() => {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(buildPayload()));
+      } catch (_) { /* storage full or unavailable — ignore */ }
+    }, 400);
+    return () => clearTimeout(id);
+  }, [buildPayload]);
+
+  // Remember the file the user saved/loaded so subsequent saves overwrite it
+  // instead of downloading a new copy each time.
+  const fileHandleRef = useRef(null);
+
+  const applyLoadedData = useCallback((data) => {
+    if (!data || !Array.isArray(data.activities)) {
+      window.alert('Could not load that file — it does not look like a HeatQueue save.');
+      return false;
+    }
+    // Backfill ovenCount for older saves.
+    setActivities(data.activities.map(a => ({ ovenCount: 1, ...a })));
+    setTaskHeats(data.taskHeats && typeof data.taskHeats === 'object' ? data.taskHeats : {});
+    if (data.selectedId != null) setSelectedId(data.selectedId);
+    return true;
+  }, []);
+
+  const saveToFile = useCallback(async () => {
+    const json = JSON.stringify(buildPayload(), null, 2);
+    const suggestedName = `heatqueue-${new Date().toISOString().slice(0,10)}.json`;
+
+    // File System Access API: write straight to a remembered file handle so we
+    // overwrite the same file instead of cluttering Downloads with copies.
+    if (window.showSaveFilePicker) {
+      try {
+        let handle = fileHandleRef.current;
+        if (!handle) {
+          handle = await window.showSaveFilePicker({
+            suggestedName,
+            types: [{ description: 'HeatQueue save', accept: { 'application/json': ['.json'] } }],
+          });
+          fileHandleRef.current = handle;
+        }
+        const writable = await handle.createWritable();
+        await writable.write(json);
+        await writable.close();
+        return;
+      } catch (err) {
+        if (err && err.name === 'AbortError') return; // user cancelled
+        fileHandleRef.current = null; // fall through to download fallback
+      }
+    }
+
+    // Fallback (older browsers, most mobile): download a file.
+    const blob = new Blob([json], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `heatqueue-${new Date().toISOString().slice(0,10)}.json`;
+    a.download = suggestedName;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-  }, [activities, taskHeats, selectedId]);
+  }, [buildPayload]);
 
   const loadFromFile = useCallback((file) => {
     const reader = new FileReader();
     reader.onload = () => {
       try {
-        const data = JSON.parse(String(reader.result));
-        if (!Array.isArray(data.activities)) throw new Error('bad shape');
-        // Backfill ovenCount for older saves.
-        const acts = data.activities.map(a => ({ ovenCount: 1, ...a }));
-        setActivities(acts);
-        if (data.taskHeats && typeof data.taskHeats === 'object') {
-          setTaskHeats(data.taskHeats);
-        } else {
-          setTaskHeats({});
-        }
-        if (data.selectedId != null) setSelectedId(data.selectedId);
+        applyLoadedData(JSON.parse(String(reader.result)));
       } catch (err) {
         window.alert('Could not load that file — it does not look like a HeatQueue save.');
       }
     };
     reader.readAsText(file);
-  }, []);
+  }, [applyLoadedData]);
+
+  // Load via the File System Access API when available, so the chosen file
+  // also becomes the target for future saves.
+  const pickAndLoad = useCallback(async () => {
+    try {
+      const [handle] = await window.showOpenFilePicker({
+        types: [{ description: 'HeatQueue save', accept: { 'application/json': ['.json'] } }],
+        multiple: false,
+      });
+      const file = await handle.getFile();
+      const ok = applyLoadedData(JSON.parse(await file.text()));
+      if (ok) fileHandleRef.current = handle;
+    } catch (err) {
+      if (err && err.name === 'AbortError') return;
+      window.alert('Could not load that file — it does not look like a HeatQueue save.');
+    }
+  }, [applyLoadedData]);
 
   // ── Keyboard ──────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -971,6 +1059,7 @@ function App() {
               onReorderActivities={reorderActivities}
               onSave={saveToFile}
               onLoad={loadFromFile}
+              onPickLoad={pickAndLoad}
               heats={heats}
             />
             <div className="hinge" aria-hidden="true">

@@ -588,9 +588,7 @@
   height:240px;
   flex:none;
 }
-.device.is-vertical .activity-list{
-  /* keep vertical scroll — list remains a column */
-}
+/* .device.is-vertical .activity-list keeps default vertical scroll — no override needed */
 .device.is-vertical .hinge{
   width:100%;
   height:14px;
@@ -732,10 +730,11 @@
   font-size:15px; font-weight:700;
   color:var(--ink);
   -moz-appearance:textfield;
+  appearance:textfield;
 }
 .time-inputs input[type="number"]::-webkit-outer-spin-button,
 .time-inputs input[type="number"]::-webkit-inner-spin-button{
-  -webkit-appearance:none; margin:0;
+  -webkit-appearance:none; appearance:none; margin:0;
 }
 .time-unit{
   font-size:10px; letter-spacing:.1em; color:var(--dim);
