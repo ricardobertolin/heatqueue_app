@@ -7,7 +7,7 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "theme": "cream",
   "showStreak": true,
   "showScanlines": true,
-  "layout": "horizontal"
+  "layout": "vertical"
 }/*EDITMODE-END*/;
 
 const DEFAULT_TASK_DURATION_MS = 60 * 60 * 1000; // 1 hour fallback
@@ -118,6 +118,8 @@ function ConveyorScreen({ activity, heat, elapsedMs, taskHeats, focusedSlot, onC
   useEffect(() => {
     function onMove(e) {
       if (!panState.current) return;
+      if (e.pointerId != null && panState.current.pointerId != null
+          && e.pointerId !== panState.current.pointerId) return;
       const dx = (e.clientX - panState.current.startX) / panState.current.scale;
       const next = panState.current.startPan + dx;
       setPanX(Math.max(0, Math.min(panState.current.maxPan, next)));
@@ -129,25 +131,28 @@ function ConveyorScreen({ activity, heat, elapsedMs, taskHeats, focusedSlot, onC
         document.body.style.cursor = '';
       }
     }
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
     return () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
     };
   }, []);
 
-  function onBeltMouseDown(e) {
-    if (e.button !== 0) return;
-    if (e.target.closest('.task')) return;       // task drag handles itself
+  function onBeltPointerDown(e) {
+    if (e.pointerType === 'mouse') {
+      if (e.button !== 0) return;
+      if (e.target.closest('.task')) return;   // mouse: tasks drag via HTML5 d&d
+    }
     if (e.target.closest('button')) return;
     if (!beltRef.current) return;
     const r = beltRef.current.getBoundingClientRect();
     const scale = r.width / beltRef.current.offsetWidth || 1;
-    panState.current = { startX: e.clientX, startPan: panX, scale, maxPan };
+    panState.current = { startX: e.clientX, startPan: panX, scale, maxPan, pointerId: e.pointerId };
     setIsPanning(true);
     document.body.style.cursor = 'grabbing';
-    e.preventDefault();
   }
 
   // ── Task reorder via HTML5 drag-and-drop ───────────────────────────────────
@@ -192,7 +197,7 @@ function ConveyorScreen({ activity, heat, elapsedMs, taskHeats, focusedSlot, onC
       <div
         className={`belt-area ${isPanning ? 'is-panning':''} ${maxPan > 0 ? 'is-pannable':''}`}
         ref={beltRef}
-        onMouseDown={onBeltMouseDown}
+        onPointerDown={onBeltPointerDown}
       >
         {/* dotted infinity tail on the left */}
         <div className="belt-tail" aria-hidden="true">
@@ -278,6 +283,25 @@ function ConveyorScreen({ activity, heat, elapsedMs, taskHeats, focusedSlot, onC
             <div className="empty-mono">QUEUE EMPTY</div>
             <button className="finish-btn" onClick={onAddTask}>+ Add a task</button>
           </div>
+        )}
+
+        {maxPan > 0 && (
+          <>
+            <button
+              className="belt-arrow belt-arrow-left"
+              disabled={panX >= maxPan - 0.5}
+              onClick={() => setPanX(p => Math.min(maxPan, p + STEP))}
+              title="See earlier tasks"
+              aria-label="Scroll left"
+            >‹</button>
+            <button
+              className="belt-arrow belt-arrow-right"
+              disabled={panX <= 0.5}
+              onClick={() => setPanX(p => Math.max(0, p - STEP))}
+              title="See later tasks"
+              aria-label="Scroll right"
+            >›</button>
+          </>
         )}
       </div>
 

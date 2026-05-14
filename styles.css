@@ -283,6 +283,8 @@
   position:relative; flex:1; min-height:0;
   padding:24px 0 24px 40px;
   user-select:none;
+  touch-action: pan-y;
+  overscroll-behavior-x: contain;
 }
 .belt-area.is-pannable{ cursor: grab; }
 .belt-area.is-panning, .belt-area.is-panning *{ cursor: grabbing !important; }
@@ -488,6 +490,32 @@
   font-size:11px;
   line-height:1;
 }
+
+/* belt nav arrows ──────────────────────────────────────────────────────── */
+.belt-arrow{
+  position:absolute;
+  bottom:140px;
+  z-index: 8;
+  width:34px; height:34px;
+  border-radius:50%;
+  border:1.5px solid var(--ink);
+  background:#fff;
+  color: var(--ink);
+  font-family:'JetBrains Mono', ui-monospace, monospace;
+  font-weight:700;
+  font-size:20px;
+  line-height:1;
+  padding:0;
+  cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+  box-shadow: 0 2px 0 rgba(0,0,0,.22);
+  touch-action: manipulation;
+}
+.belt-arrow:hover:not(:disabled){ background: rgba(0,0,0,.05); }
+.belt-arrow:active:not(:disabled){ transform: translateY(1px); box-shadow: 0 1px 0 rgba(0,0,0,.22); }
+.belt-arrow:disabled{ opacity:.25; cursor:not-allowed; }
+.belt-arrow-left{ left:6px; }
+.belt-arrow-right{ right:6px; }
 
 .finish-btn{
   font-family:'Bricolage Grotesque','Inter',sans-serif;
